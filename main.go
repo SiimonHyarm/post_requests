@@ -194,7 +194,7 @@ func downloadS3() {
 // This function sends a get request to Pipedrive and downloads my deals // can easily be replaced by variable <domain> instead of edukoht in string, same with <api_token>, can be added to token files
 func getDealsFromPipeDrive() {
 	var success Success
-	url := "https://edukoht.pipedrive.com/api/v1/deals?api_token=2d514988a632fcc6cc85f020c64b6f77a9dad678"
+	url := "https://edukoht.pipedrive.com/api/v1/deals?api_token="
 	resp, err := http.Get(url)
 
 	if err != nil {
