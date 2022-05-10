@@ -292,7 +292,7 @@ func postDeals(deals []Deal) {
 		log.Println(deals)
 		wg.Add(1)
 		go func(deals []Deal) { //go routines to make post requests faster, sadly I am still throttled, hopefully in case of hundres of CPUs on AWS, no throttles will be there when sending data
-			url := "https://edukoht.pipedrive.com/api/v1/deals?api_token=2d514988a632fcc6cc85f020c64b6f77a9dad678"
+			url := "https://edukoht.pipedrive.com/api/v1/deals?api_token="
 			for _, deal := range deals {
 				request := gorequest.New()
 				resp, _, err := request.Post(url).
@@ -314,7 +314,7 @@ func postDeals(deals []Deal) {
 	/* 	for _, deal := range deals {
 		log.Println("deal", deal)
 		request := gorequest.New()
-		url := "https://edukoht.pipedrive.com/api/v1/deals?api_token=2d514988a632fcc6cc85f020c64b6f77a9dad678"
+		url := "https://edukoht.pipedrive.com/api/v1/deals?api_token="
 		resp, _, err := request.Post(url).
 			Send(deal).
 			End()
