@@ -1,26 +1,21 @@
 package main
 
 import (
-	"compress/gzip"
 	"encoding/csv"
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/parnurzeal/gorequest"
 )
 
-// needed structs to work with all of the data
+// Deal needed structs to work with all the data
 type Deal struct {
 	Title    string  `json:"title"`
 	Currency string  `json:"currency"`
@@ -163,69 +158,139 @@ type Success struct {
 	Success bool `json:"success"`
 }
 
-// function to download the file form S3
-func downloadS3() {
-	sess, _ := session.NewSession(&aws.Config{
-		Region:      aws.String("eu-central-1"),
-		Credentials: credentials.NewSharedCredentials("", "default"),
-	})
-
-	downloader := s3manager.NewDownloader(sess, func(d *s3manager.Downloader) {
-		d.PartSize = 64 * 1024 // 64MB per part
-		d.Concurrency = 6
-	})
-
-	f, err := os.Create("deals.csv.gz")
-	if err != nil {
-		log.Println("failed to create file", "deals.csv.gz", err)
-	}
-
-	// Write the contents of S3 Object to the file
-	n, err := downloader.Download(f, &s3.GetObjectInput{
-		Bucket: aws.String("pdw-export.zulu"),
-		Key:    aws.String("test_tasks/deals.csv.gz"),
-	})
-	if err != nil {
-		log.Println("failed to download file", "deals.csv.gz", err)
-	}
-	log.Printf("file downloaded, %d bytes\n", n)
+type Customer struct {
+	ID        string
+	FirstName string
+	LastName  string
 }
+
+type Order struct {
+	ID        string
+	UserID    string
+	OrderDate string
+	Status    string
+}
+
+type Payment struct {
+	ID            string
+	OrderID       string
+	PaymentMethod string
+	Amount        float64
+}
+
+/*func dlDataSet() {
+	url := "https://github.com/dbt-labs/jaffle-shop-classic/tree/main/seeds"
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Fatalf("Error downloading page: %v", err)
+	}
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			log.Fatalf("Error closing response body: %v", err)
+		}
+	}(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		log.Fatalf("Error: received non-200 response code: %d", resp.StatusCode)
+	}
+
+	doc, err := html.Parse(resp.Body)
+	if err != nil {
+		log.Fatalf("Error parsing HTML: %v", err)
+	}
+
+	var csvLinks []string
+	var f func(*html.Node)
+	f = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "a" {
+			for _, a := range n.Attr {
+				if a.Key == "href" && strings.HasSuffix(a.Val, ".csv") {
+					link := strings.Replace(a.Val, "/blob", "", 1)
+					csvLinks = append(csvLinks, "https://raw.githubusercontent.com"+link)
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
+		}
+	}
+	f(doc)
+
+	for _, link := range csvLinks {
+		resp, err := http.Get(link)
+		if err != nil {
+			log.Printf("Error downloading file %s: %v", link, err)
+			continue
+		}
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				log.Printf("Error closing response body for %s: %v", link, err)
+			}
+		}(resp.Body)
+
+		if resp.StatusCode != http.StatusOK {
+			log.Printf("Error: received non-200 response code for %s: %d", link, resp.StatusCode)
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("Error reading response body for %s: %v", link, err)
+			continue
+		}
+
+		fileName := path.Base(link)
+		err = os.WriteFile(fileName, body, 0644)
+		if err != nil {
+			log.Printf("Error writing to file %s: %v", fileName, err)
+			continue
+		}
+
+		log.Printf("File %s downloaded successfully", fileName)
+	}
+}*/
 
 // This function sends a get request to Pipedrive and downloads my deals // can easily be replaced by variable <domain> instead of edukoht in string, same with <api_token>, can be added to token files
 func getDealsFromPipeDrive() {
 	var success Success
-	url := "https://edukoht.pipedrive.com/api/v1/deals?api_token="
+	url := "https://test-comp-pd-task.pipedrive.com/api/v1/deals?api_token="
 	resp, err := http.Get(url)
 
 	if err != nil {
 		log.Println("Error creating request", err)
 	}
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		panic(err.Error())
 	}
-	json.Unmarshal(body, &success) //turn success data into array of structs
+	err = json.Unmarshal(body, &success)
+	if err != nil {
+		return
+	} //turn success data into array of structs
 	var ListDeals []DealList
 	for i := 0; i < len(success.Data); i++ {
 		ListDeals = append(ListDeals, DealList{success.Data[i].Title, success.Data[i].Value})
 	}
+	log.Println(ListDeals)
 	readDeals(ListDeals) //call readDeals to read deals from csv and decide which values to update and post request to Pipedrive
 }
 
 // this function reads data from csv file downloaded from S3 and decide what values to update and post request to Pipedrive
 func readDeals(listDeals []DealList) {
-	f, err := os.Open("deals.csv.gz")
+	f, err := os.Open("deals.csv")
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer f.Close()
-	gr, err := gzip.NewReader(f)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer gr.Close()
+	defer func(f *os.File) {
+		err := f.Close()
+		if err != nil {
 
-	deals := csv.NewReader(gr)
+		}
+	}(f)
+
+	deals := csv.NewReader(f)
 	if _, err := deals.Read(); err != nil {
 		panic(err)
 	}
@@ -234,13 +299,13 @@ func readDeals(listDeals []DealList) {
 		panic(err)
 	}
 	var companyDeals []Deal
-	for _, deal := range rows {
-		value, _ := strconv.ParseFloat(deal[2], 64)
+	for _, record := range rows {
+		amount, _ := strconv.ParseFloat(record[8], 64)
 		data := Deal{
-			Title:    deal[0],
-			Currency: deal[1],
-			Value:    value * 2,
-			Status:   deal[3],
+			Title:    record[2] + " " + record[1], // LastName FirstName as Title
+			Currency: "EUR",                       // Default Currency
+			Value:    amount,
+			Status:   record[5], // Order Status
 		}
 		companyDeals = append(companyDeals, data)
 	}
@@ -270,6 +335,134 @@ func readDeals(listDeals []DealList) {
 		dealsToPost = append(dealsToPost, Deal{companyDeals[j].Title, companyDeals[j].Currency, companyDeals[j].Value, companyDeals[j].Status})
 	}
 	postDeals(dealsToPost) // send the array with values missing in Pipedrive or in need of update.
+}
+
+func readAndMergeCSVFiles(dir string, outputFile string) {
+	// Maps to store data from each CSV file
+	customers := make(map[string]Customer)
+	orders := make(map[string]Order)
+	payments := make(map[string]Payment)
+
+	// Read all CSV files in the directory
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && filepath.Ext(path) == ".csv" {
+			file, err := os.Open(path)
+			if err != nil {
+				log.Fatalf("Error opening file %s: %v", path, err)
+			}
+			defer file.Close()
+
+			reader := csv.NewReader(file)
+			records, err := reader.ReadAll()
+			if err != nil {
+				log.Fatalf("Error reading file %s: %v", path, err)
+			}
+
+			switch filepath.Base(path) {
+			case "raw_customers.csv":
+				for _, record := range records[1:] { // Skip headers
+					customers[record[0]] = Customer{
+						ID:        record[0],
+						FirstName: record[1],
+						LastName:  record[2],
+					}
+				}
+			case "raw_orders.csv":
+				for _, record := range records[1:] { // Skip headers
+					orders[record[0]] = Order{
+						ID:        record[0],
+						UserID:    record[1],
+						OrderDate: record[2],
+						Status:    record[3],
+					}
+				}
+			case "raw_payments.csv":
+				for _, record := range records[1:] { // Skip headers
+					amount, _ := strconv.ParseFloat(record[3], 64)
+					payments[record[0]] = Payment{
+						ID:            record[0],
+						OrderID:       record[1],
+						PaymentMethod: record[2],
+						Amount:        amount,
+					}
+				}
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		log.Fatalf("Error walking through directory: %v", err)
+	}
+
+	// Open the output file
+	outFile, err := os.Create(outputFile)
+	if err != nil {
+		log.Fatalf("Error creating output file: %v", err)
+	}
+	defer outFile.Close()
+
+	writer := csv.NewWriter(outFile)
+	defer writer.Flush()
+
+	// Write headers
+	headers := []string{"CustomerID", "FirstName", "LastName", "OrderID", "OrderDate", "Status", "PaymentID", "PaymentMethod", "Amount"}
+	if err := writer.Write(headers); err != nil {
+		log.Fatalf("Error writing headers to output file: %v", err)
+	}
+
+	// Write merged data to the output file
+	for _, order := range orders {
+		customer := customers[order.UserID]
+		for _, payment := range payments {
+			if payment.OrderID == order.ID {
+				record := []string{
+					customer.ID, customer.FirstName, customer.LastName,
+					order.ID, order.OrderDate, order.Status,
+					payment.ID, payment.PaymentMethod, strconv.FormatFloat(payment.Amount, 'f', 2, 64),
+				}
+				if err := writer.Write(record); err != nil {
+					log.Fatalf("Error writing record to output file: %v", err)
+				}
+			}
+		}
+	}
+}
+
+func readDealsFromCSV(filePath string) []Deal {
+	file, err := os.Open(filePath)
+	if err != nil {
+		log.Fatalf("Error opening file: %v", err)
+	}
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+			log.Fatalf("Error closing file: %v", err)
+		}
+	}(file)
+
+	reader := csv.NewReader(file)
+	records, err := reader.ReadAll()
+	if err != nil {
+		log.Fatalf("Error reading CSV file: %v", err)
+	}
+
+	var deals []Deal
+	for _, record := range records[1:] { // Skip headers
+		amount, _ := strconv.ParseFloat(record[8], 64)
+		deal := Deal{
+			Title:    record[2] + " " + record[1], // LastName FirstName as Title
+			Currency: "EUR",                       // Default Currency
+			Value:    amount,
+			Status:   record[5], // Order Status
+		}
+		deals = append(deals, deal)
+	}
+
+	return deals
 }
 
 // func post deals that divides the long array of structs into smaller slices of 130 elements per slice, thus flying just a little under 80 post request per second, hopefully slowly enough
@@ -331,6 +524,7 @@ func postDeals(deals []Deal) {
 }
 
 func main() {
-	//downloadS3()  //We download the S3 file with deals. uncomment this for production
+	//dlDataSet() //download the file from the link
 	getDealsFromPipeDrive() //to check what values need to be updated, we go to getDealsFromPipeDrive
+	// readAndMergeCSVFiles(".", "deals.csv") //merge all the csv files in the directory
 }
